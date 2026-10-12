@@ -30,6 +30,7 @@
     "dist",
     "src",
     "scripts",
+    "docs",
     "README.md",
     "cordis.patch.yml"
   ],
