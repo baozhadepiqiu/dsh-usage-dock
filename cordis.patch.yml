@@ -1,0 +1,8 @@
+# dsh-usage-dock bundle layer — applied automatically when the profile lists
+# this package in dsh.profile.bundles (via the dsh.bundle.patch declaration).
+#
+# Install:
+#   dsh plugin --profile web add /home/lcg/app/dsh/dsh-usage-dock
+- insert:
+    - id: usage-dock
+      name: dsh-usage-dock

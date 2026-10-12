@@ -1,0 +1,58 @@
+{
+  "name": "dsh-usage-dock",
+  "version": "0.1.0",
+  "description": "DSH plugin: a status strip under the Web composer showing a context-window battery (256K = 3 bars, 1M = 10 bars) plus Zhipu GLM Coding Plan quota / DeepSeek balance, auto-switched by the workspace's selected model.",
+  "author": "lcg",
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "context",
+    "quota",
+    "zhipu",
+    "glm",
+    "deepseek",
+    "coding-plan"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "dist",
+    "src",
+    "scripts",
+    "README.md",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
