@@ -35,7 +35,10 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "build:client": "node scripts/build-client.mjs"
+    "build": "tsx scripts/build.ts",
+    "build:client": "tsx scripts/build.ts --client-only",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke-client.ts"
   },
   "dsh": {
     "bundle": {
@@ -54,6 +57,10 @@
     "react": "^18.2.0"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   }
 }

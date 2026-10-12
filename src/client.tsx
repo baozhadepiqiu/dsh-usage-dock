@@ -1,10 +1,7 @@
-// dsh-usage-dock — browser client.
+// dsh-usage-dock — browser client (TypeScript source; bundled by esbuild).
 //
 // Registers one entry in the `conversation.composer.dock` slot and renders it
-// ON THE SAME CENTERED LINE as the built-in stats row (the cache-hit pills):
-//
-//        缓存命中 34% · 12轮30步   ·   5H ▕▓▓▓▓▓▓▓▓▓░▏89% ↻16:23   周 ▕▓▓▓▓░░░░░░▏39% ↻周二09:36
-//
+// ON THE SAME CENTERED LINE as the built-in stats row (the cache-hit pills).
 // The dock anchor the renderer emits is inline-styled `display:contents`, so
 // each entry would normally own a full-width row of its own. The injected
 // stylesheet flips the anchor into a real wrapping centered flex row
@@ -15,9 +12,9 @@
 // vs its (0,1,0) class-only) and win regardless of injection order.
 //
 // Display is retro segmented meters — one cell per decile, LCD-style framed
-// cell bank + monospace numerals — no battery icon. Cells and the percentage
-// show the REMAINING quota (the bank drains as the window is consumed);
-// ≤30% remaining turns warn, ≤10% danger. Used/total detail is hover-only.
+// cell bank + monospace numerals. Cells and the percentage show the REMAINING
+// quota (the bank drains as the window is consumed); ≤30% remaining turns
+// warn, ≤10% danger. Used/total detail is hover-only.
 //
 //   - 5H / 周: Zhipu GLM Coding Plan windows served by this plugin's host
 //     route — unit=3 → 5-hour window, unit=6 → weekly window (fallback:
@@ -30,6 +27,7 @@
 // locale seat `t` (because the entry declares a locale namespace).
 
 import { useEffect, useRef, useState } from "react";
+import type { DeepSeekStatus, DockStatus, QuotaWindow, Translate, ZhipuStatus } from "./types";
 
 const NS = "usage-dock";
 
@@ -69,7 +67,7 @@ if (typeof document !== "undefined" && document.querySelector("style[data-plugin
   document.head.appendChild(tag);
 }
 
-const zh = {
+const zh: Record<string, string> = {
   "lane.5h": "5H",
   "lane.wk": "周",
   "lane.ds": "DS",
@@ -86,7 +84,7 @@ const zh = {
   "quota.granted": "（含赠送 {mark}{granted}）",
   "quota.key": "密钥 {ref}",
 };
-const en = {
+const en: Record<string, string> = {
   "lane.5h": "5H",
   "lane.wk": "WK",
   "lane.ds": "DS",
@@ -108,10 +106,10 @@ const en = {
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
-const two = (n) => String(n).padStart(2, "0");
+const two = (n: number): string => String(n).padStart(2, "0");
 
 /** Reset stamp: HH:MM for the 5h window, weekday + HH:MM for the weekly one. */
-function resetLabel(resetAt, weekly) {
+function resetLabel(resetAt: number | null | undefined, weekly: boolean): string {
   if (resetAt === null || resetAt === undefined) return "";
   const ms = typeof resetAt === "number" ? resetAt : Date.parse(resetAt);
   if (!Number.isFinite(ms)) return "";
@@ -126,8 +124,8 @@ function resetLabel(resetAt, weekly) {
 }
 
 /** Localized exact integer for tooltips. */
-function exactInt(value) {
-  if (!Number.isFinite(value)) return "—";
+function exactInt(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "—";
   try {
     return value.toLocaleString(undefined);
   } catch {
@@ -141,8 +139,10 @@ function exactInt(value) {
 
 const CELLS = 10;
 
+interface CellsProps { total: number; filled: number }
+
 /** LCD-style cell bank: `total` cells, `filled` of them lit. */
-function Cells({ total, filled }) {
+function Cells({ total, filled }: CellsProps) {
   const cells = [];
   for (let i = 0; i < total; i++) {
     cells.push(<span key={i} className={i < filled ? "udCell udCellOn" : "udCell"} />);
@@ -151,16 +151,16 @@ function Cells({ total, filled }) {
 }
 
 /** Low-remaining alarm tint: ≤10% remaining is danger, ≤30% is warn. */
-function toneFor(remainingPct) {
+function toneFor(remainingPct: number): string {
   return remainingPct <= 10 ? "udLaneDanger" : remainingPct <= 30 ? "udLaneWarn" : "";
 }
 
 /** Remaining share of a window: from raw counts when available, else 100 − used%. */
-function remainingPctOf(window) {
-  if (window?.remaining != null && window?.total) {
+function remainingPctOf(window: QuotaWindow): number {
+  if (window.remaining != null && window.total) {
     return Math.max(0, Math.min(100, Math.round((window.remaining / window.total) * 100)));
   }
-  const used = Math.max(0, Math.min(100, Math.round(window?.usedPct ?? 0)));
+  const used = Math.max(0, Math.min(100, Math.round(window.usedPct ?? 0)));
   return 100 - used;
 }
 
@@ -169,7 +169,7 @@ function remainingPctOf(window) {
  * (cells drain as the window is consumed); the reset clock rides along. The
  * used/total detail lives in the hover tooltip only.
  */
-function windowLane(window, tag, weekly, t) {
+function windowLane(window: QuotaWindow | null, tag: string, weekly: boolean, t: Translate) {
   if (!window) return null;
   const remainingPct = remainingPctOf(window);
   const filled = remainingPct <= 0 ? 0 : Math.max(1, Math.round((remainingPct / 100) * CELLS));
@@ -203,37 +203,46 @@ function windowLane(window, tag, weekly, t) {
 
 const POLL_MS = 5 * 60 * 1000;
 
-function QuotaGroup({ provider, model, refreshSignal, onRefresh, t }) {
-  const [state, setState] = useState({ loading: false, data: null });
+interface QuotaGroupProps {
+  provider: string;
+  model: string;
+  refreshSignal: number;
+  onRefresh?: () => void;
+  t: Translate;
+}
+
+function QuotaGroup({ provider, model, refreshSignal, onRefresh, t }: QuotaGroupProps) {
+  const [state, setState] = useState<{ loading: boolean; data: DockStatus | null }>({ loading: false, data: null });
   const generation = useRef(0);
 
   useEffect(() => {
     const gen = ++generation.current;
     let cancelled = false;
 
-    const load = async (refresh) => {
+    const load = async (refresh: boolean) => {
       setState((s) => ({ ...s, loading: true }));
-      let data;
+      let data: DockStatus;
       try {
         const qs = `provider=${encodeURIComponent(provider)}&model=${encodeURIComponent(model)}${refresh ? "&refresh=1" : ""}`;
         const res = await fetch(`/dsh-usage-dock/status?${qs}`, { headers: { Accept: "application/json" } });
-        data = await res.json();
+        data = await res.json() as DockStatus;
       } catch (err) {
-        data = { ok: false, code: "HTTP", error: String(err?.message ?? err) };
+        const message = err instanceof Error ? err.message : String(err);
+        data = { ok: false, code: "HTTP", error: message };
       }
       if (!cancelled && gen === generation.current) setState({ loading: false, data });
     };
 
-    if (provider !== "" || model !== "") load(refreshSignal > 0);
-    const timer = setInterval(() => load(false), POLL_MS);
+    if (provider !== "" || model !== "") void load(refreshSignal > 0);
+    const timer = setInterval(() => void load(false), POLL_MS);
     return () => { cancelled = true; clearInterval(timer); };
   }, [provider, model, refreshSignal]);
 
   const data = state.data;
-  if (data && data.code === "UNSUPPORTED") return null;
+  if (data && !data.ok && data.code === "UNSUPPORTED") return null;
 
   let body;
-  let tooltip;
+  let tooltip: string;
   let error = false;
   if (data == null) {
     body = <span className="udLane">{t("quota.refresh")}</span>;
@@ -244,21 +253,23 @@ function QuotaGroup({ provider, model, refreshSignal, onRefresh, t }) {
     body = <span className="udLane">{label}</span>;
     tooltip = `${data.error ?? ""}\n${t("quota.refresh")}`.trim();
   } else if (data.vendor === "zhipu") {
+    const ds = data as ZhipuStatus;
     body = [
-      windowLane(data.fiveHour, t("lane.5h"), false, t),
-      windowLane(data.weekly, t("lane.wk"), true, t),
+      windowLane(ds.fiveHour, t("lane.5h"), false, t),
+      windowLane(ds.weekly, t("lane.wk"), true, t),
     ];
-    const lines = [`${data.vendorLabel ?? "智谱 GLM Coding Plan"}${data.level ? ` · ${t("quota.level", { level: data.level })}` : ""}`];
-    if (data.fiveHour) lines.push(`${t("quota.5h")}：${t("quota.remaining", { pct: String(remainingPctOf(data.fiveHour)), used: exactInt(data.fiveHour.used), total: exactInt(data.fiveHour.total), remaining: exactInt(data.fiveHour.remaining) })}${data.fiveHour.resetAt != null ? ` · ${t("quota.reset", { time: resetLabel(data.fiveHour.resetAt, false) })}` : ""}`);
-    if (data.weekly) lines.push(`${t("quota.weekly")}：${t("quota.remaining", { pct: String(remainingPctOf(data.weekly)), used: exactInt(data.weekly.used), total: exactInt(data.weekly.total), remaining: exactInt(data.weekly.remaining) })}${data.weekly.resetAt != null ? ` · ${t("quota.reset", { time: resetLabel(data.weekly.resetAt, true) })}` : ""}`);
-    if (data.keyRef) lines.push(t("quota.key", { ref: data.keyRef }));
+    const lines = [`${ds.vendorLabel ?? "智谱 GLM Coding Plan"}${ds.level ? ` · ${t("quota.level", { level: ds.level })}` : ""}`];
+    if (ds.fiveHour) lines.push(`${t("quota.5h")}：${t("quota.remaining", { pct: String(remainingPctOf(ds.fiveHour)), used: exactInt(ds.fiveHour.used), total: exactInt(ds.fiveHour.total), remaining: exactInt(ds.fiveHour.remaining) })}${ds.fiveHour.resetAt != null ? ` · ${t("quota.reset", { time: resetLabel(ds.fiveHour.resetAt, false) })}` : ""}`);
+    if (ds.weekly) lines.push(`${t("quota.weekly")}：${t("quota.remaining", { pct: String(remainingPctOf(ds.weekly)), used: exactInt(ds.weekly.used), total: exactInt(ds.weekly.total), remaining: exactInt(ds.weekly.remaining) })}${ds.weekly.resetAt != null ? ` · ${t("quota.reset", { time: resetLabel(ds.weekly.resetAt, true) })}` : ""}`);
+    if (ds.keyRef) lines.push(t("quota.key", { ref: ds.keyRef }));
     lines.push(state.loading ? t("quota.refreshing") : t("quota.refresh"));
     tooltip = lines.join("\n");
   } else {
-    const mark = data.currency === "USD" ? "$" : "¥";
-    const balance = typeof data.balance === "number" ? data.balance.toFixed(2) : "—";
-    const granted = typeof data.granted === "number" && data.granted > 0
-      ? t("quota.granted", { mark, granted: data.granted.toFixed(2) })
+    const ds = data as DeepSeekStatus;
+    const mark = ds.currency === "USD" ? "$" : "¥";
+    const balance = typeof ds.balance === "number" ? ds.balance.toFixed(2) : "—";
+    const granted = typeof ds.granted === "number" && ds.granted > 0
+      ? t("quota.granted", { mark, granted: ds.granted.toFixed(2) })
       : "";
     body = (
       <span className="udLane">
@@ -269,7 +280,7 @@ function QuotaGroup({ provider, model, refreshSignal, onRefresh, t }) {
         </span>
       </span>
     );
-    const lines = [`${data.vendorLabel ?? "DeepSeek"}`];
+    const lines = [`${ds.vendorLabel ?? "DeepSeek"}`];
     if (granted) lines.push(granted.trim());
     lines.push(state.loading ? t("quota.refreshing") : t("quota.refresh"));
     tooltip = lines.join("\n");
@@ -290,7 +301,13 @@ function QuotaGroup({ provider, model, refreshSignal, onRefresh, t }) {
 
 // Click-to-refresh: bump a signal that makes QuotaGroup re-query with
 // refresh=1 (the host route bypasses its 60s cache for that call).
-function UsageDock({ useProjection, t }) {
+interface ModelSelection { provider?: string; model?: string }
+interface UsageDockProps {
+  useProjection: (key: string) => { next?: ModelSelection | null; lastUsed?: ModelSelection | null } | null | undefined;
+  t: Translate;
+}
+
+function UsageDock({ useProjection, t }: UsageDockProps) {
   const selection = useProjection("modelSelection");
   const [refreshKey, setRefreshKey] = useState(0);
   const current = selection?.next ?? selection?.lastUsed ?? null;
@@ -312,7 +329,16 @@ function UsageDock({ useProjection, t }) {
 
 export const inject = ["slots", "locale"];
 
-export function apply(ctx) {
+interface ClientContext {
+  effect(fn: () => unknown, label?: string): unknown
+  locale: { register(ns: string, dicts: Record<string, Record<string, string>>): unknown }
+  slots: {
+    inject(slot: string, fn: () => unknown, label?: string): unknown
+    register(opts: { name: string; id: string; order: number; locale: string }, component: unknown): unknown
+  }
+}
+
+export function apply(ctx: ClientContext) {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), "usage-dock: locale dictionaries");
   ctx.slots.inject(
     "conversation.composer.dock",

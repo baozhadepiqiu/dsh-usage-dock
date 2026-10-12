@@ -15,9 +15,13 @@ systemctl --user restart dsh-web
 
 ## 开发
 
+TypeScript（strict）。源码在 `src/`（server.ts / client.tsx / types.ts），`lib/` 与 `dist/` 为构建产物。
+
 ```bash
-npm install
-npm run build:client    # src/client.jsx -> lib/client.js + dist/client.js
+npm install --cache .npm-cache
+npm run typecheck    # tsc --noEmit
+npm run build        # src -> lib/index.js + lib/client.js + dist/*
+npm run smoke        # 离线冒烟测试
 ```
 
-改服务端（`lib/index.js`）重启 `dsh-web` 即生效；改客户端需先构建再重启。
+改服务端或客户端后 `npm run build`，再 `systemctl --user restart dsh-web` 生效。详见 `agent.md`。

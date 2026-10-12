@@ -1,3 +1,4 @@
+"use strict";
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
@@ -16,7 +17,7 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// src/client.jsx
+// src/client.tsx
 var client_exports = {};
 __export(client_exports, {
   apply: () => apply,
@@ -90,7 +91,7 @@ function resetLabel(resetAt, weekly) {
   }
 }
 function exactInt(value) {
-  if (!Number.isFinite(value)) return "\u2014";
+  if (value === null || !Number.isFinite(value)) return "\u2014";
   try {
     return value.toLocaleString(void 0);
   } catch {
@@ -109,10 +110,10 @@ function toneFor(remainingPct) {
   return remainingPct <= 10 ? "udLaneDanger" : remainingPct <= 30 ? "udLaneWarn" : "";
 }
 function remainingPctOf(window) {
-  if (window?.remaining != null && window?.total) {
+  if (window.remaining != null && window.total) {
     return Math.max(0, Math.min(100, Math.round(window.remaining / window.total * 100)));
   }
-  const used = Math.max(0, Math.min(100, Math.round(window?.usedPct ?? 0)));
+  const used = Math.max(0, Math.min(100, Math.round(window.usedPct ?? 0)));
   return 100 - used;
 }
 function windowLane(window, tag, weekly, t) {
@@ -165,19 +166,20 @@ function QuotaGroup({ provider, model, refreshSignal, onRefresh, t }) {
         const res = await fetch(`/dsh-usage-dock/status?${qs}`, { headers: { Accept: "application/json" } });
         data2 = await res.json();
       } catch (err) {
-        data2 = { ok: false, code: "HTTP", error: String(err?.message ?? err) };
+        const message = err instanceof Error ? err.message : String(err);
+        data2 = { ok: false, code: "HTTP", error: message };
       }
       if (!cancelled && gen === generation.current) setState({ loading: false, data: data2 });
     };
-    if (provider !== "" || model !== "") load(refreshSignal > 0);
-    const timer = setInterval(() => load(false), POLL_MS);
+    if (provider !== "" || model !== "") void load(refreshSignal > 0);
+    const timer = setInterval(() => void load(false), POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
   }, [provider, model, refreshSignal]);
   const data = state.data;
-  if (data && data.code === "UNSUPPORTED") return null;
+  if (data && !data.ok && data.code === "UNSUPPORTED") return null;
   let body;
   let tooltip;
   let error = false;
@@ -191,20 +193,22 @@ function QuotaGroup({ provider, model, refreshSignal, onRefresh, t }) {
     tooltip = `${data.error ?? ""}
 ${t("quota.refresh")}`.trim();
   } else if (data.vendor === "zhipu") {
+    const ds = data;
     body = [
-      windowLane(data.fiveHour, t("lane.5h"), false, t),
-      windowLane(data.weekly, t("lane.wk"), true, t)
+      windowLane(ds.fiveHour, t("lane.5h"), false, t),
+      windowLane(ds.weekly, t("lane.wk"), true, t)
     ];
-    const lines = [`${data.vendorLabel ?? "\u667A\u8C31 GLM Coding Plan"}${data.level ? ` \xB7 ${t("quota.level", { level: data.level })}` : ""}`];
-    if (data.fiveHour) lines.push(`${t("quota.5h")}\uFF1A${t("quota.remaining", { pct: String(remainingPctOf(data.fiveHour)), used: exactInt(data.fiveHour.used), total: exactInt(data.fiveHour.total), remaining: exactInt(data.fiveHour.remaining) })}${data.fiveHour.resetAt != null ? ` \xB7 ${t("quota.reset", { time: resetLabel(data.fiveHour.resetAt, false) })}` : ""}`);
-    if (data.weekly) lines.push(`${t("quota.weekly")}\uFF1A${t("quota.remaining", { pct: String(remainingPctOf(data.weekly)), used: exactInt(data.weekly.used), total: exactInt(data.weekly.total), remaining: exactInt(data.weekly.remaining) })}${data.weekly.resetAt != null ? ` \xB7 ${t("quota.reset", { time: resetLabel(data.weekly.resetAt, true) })}` : ""}`);
-    if (data.keyRef) lines.push(t("quota.key", { ref: data.keyRef }));
+    const lines = [`${ds.vendorLabel ?? "\u667A\u8C31 GLM Coding Plan"}${ds.level ? ` \xB7 ${t("quota.level", { level: ds.level })}` : ""}`];
+    if (ds.fiveHour) lines.push(`${t("quota.5h")}\uFF1A${t("quota.remaining", { pct: String(remainingPctOf(ds.fiveHour)), used: exactInt(ds.fiveHour.used), total: exactInt(ds.fiveHour.total), remaining: exactInt(ds.fiveHour.remaining) })}${ds.fiveHour.resetAt != null ? ` \xB7 ${t("quota.reset", { time: resetLabel(ds.fiveHour.resetAt, false) })}` : ""}`);
+    if (ds.weekly) lines.push(`${t("quota.weekly")}\uFF1A${t("quota.remaining", { pct: String(remainingPctOf(ds.weekly)), used: exactInt(ds.weekly.used), total: exactInt(ds.weekly.total), remaining: exactInt(ds.weekly.remaining) })}${ds.weekly.resetAt != null ? ` \xB7 ${t("quota.reset", { time: resetLabel(ds.weekly.resetAt, true) })}` : ""}`);
+    if (ds.keyRef) lines.push(t("quota.key", { ref: ds.keyRef }));
     lines.push(state.loading ? t("quota.refreshing") : t("quota.refresh"));
     tooltip = lines.join("\n");
   } else {
-    const mark = data.currency === "USD" ? "$" : "\xA5";
-    const balance = typeof data.balance === "number" ? data.balance.toFixed(2) : "\u2014";
-    const granted = typeof data.granted === "number" && data.granted > 0 ? t("quota.granted", { mark, granted: data.granted.toFixed(2) }) : "";
+    const ds = data;
+    const mark = ds.currency === "USD" ? "$" : "\xA5";
+    const balance = typeof ds.balance === "number" ? ds.balance.toFixed(2) : "\u2014";
+    const granted = typeof ds.granted === "number" && ds.granted > 0 ? t("quota.granted", { mark, granted: ds.granted.toFixed(2) }) : "";
     body = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "udLane", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "udTag", children: t("lane.ds") }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "udNum", children: [
@@ -215,7 +219,7 @@ ${t("quota.refresh")}`.trim();
         ] })
       ] })
     ] });
-    const lines = [`${data.vendorLabel ?? "DeepSeek"}`];
+    const lines = [`${ds.vendorLabel ?? "DeepSeek"}`];
     if (granted) lines.push(granted.trim());
     lines.push(state.loading ? t("quota.refreshing") : t("quota.refresh"));
     tooltip = lines.join("\n");

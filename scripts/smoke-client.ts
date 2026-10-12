@@ -1,91 +1,98 @@
 // Offline smoke test for the built client bundle (lib/client.js).
-// Usage: node scripts/smoke-client.mjs
+// Usage: npm run smoke   (tsx scripts/smoke-client.ts)
 import { readFileSync } from "node:fs";
 
 const src = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
 
 // --- module loader facade --------------------------------------------------
-let captured = null;
+interface LoaderDef { factory: (require: (name: string) => unknown) => Record<string, unknown> }
+let captured: LoaderDef | null = null;
 globalThis.window = {
-  __ModuleLoader__: { load: (def) => { captured = def; } },
-};
+  __ModuleLoader__: { load: (def: LoaderDef) => { captured = def; } },
+} as unknown as typeof globalThis.window;
 new Function("window", src)(globalThis.window);
 if (!captured) throw new Error("bundle did not call __ModuleLoader__.load");
 
 // --- stub modules ------------------------------------------------------------
 // Minimal hooks: per-call-order state cells (cursor resets each render pass)
 // plus effect queue with cleanup handling so intervals don't wedge the process.
-const hooks = { cells: [], cursor: 0, pending: [], cleanups: [] };
+type Cleanup = () => void;
+type EffectFn = () => Cleanup | void;
+const hooks = { cells: [] as unknown[], cursor: 0, pending: [] as EffectFn[], cleanups: [] as Cleanup[] };
 const react = {
-  useEffect: (fn) => { hooks.pending.push(fn); },
+  useEffect: (fn: EffectFn) => { hooks.pending.push(fn); },
   useRef: () => ({ current: 0 }),
-  useState: (init) => {
+  useState: (init: unknown): [unknown, (up: unknown) => void] => {
     const i = hooks.cursor++;
-    if (!(i in hooks.cells)) hooks.cells[i] = typeof init === "function" ? init() : init;
-    return [hooks.cells[i], (up) => { hooks.cells[i] = typeof up === "function" ? up(hooks.cells[i]) : up; }];
+    if (!(i in hooks.cells)) hooks.cells[i] = typeof init === "function" ? (init as () => unknown)() : init;
+    return [hooks.cells[i], (up: unknown) => {
+      hooks.cells[i] = typeof up === "function" ? (up as (prev: unknown) => unknown)(hooks.cells[i]) : up;
+    }];
   },
 };
-const h = (type, props) => ({ type, props: props ?? {} });
+interface VNode { type: unknown; props: { children?: unknown; [key: string]: unknown } }
+const h = (type: unknown, props?: VNode["props"]): VNode => ({ type, props: props ?? {} });
 const jsxRuntime = { jsx: h, jsxs: h, Fragment: "Fragment" };
-const modules = new Map([
+const modules = new Map<string, { exports: unknown }>([
   ["react", { exports: react }],
   ["react/jsx-runtime", { exports: jsxRuntime }],
 ]);
-const requireStub = (name) => {
+const requireStub = (name: string): unknown => {
   if (!modules.has(name)) modules.set(name, { exports: {} });
-  return modules.get(name).exports;
+  return modules.get(name)!.exports;
 };
 
-const clientExports = captured.factory(requireStub);
-console.log("apply:", typeof clientExports.apply, "| inject:", JSON.stringify(clientExports.inject));
+const clientExports = (captured as LoaderDef | null)?.factory(requireStub as (name: string) => never) ?? {};
+console.log("apply:", typeof clientExports["apply"], "| inject:", JSON.stringify(clientExports["inject"]));
 
 // --- drive apply() -----------------------------------------------------------
-const registered = [];
-const localeDicts = {};
+interface RegisteredEntry { opts: { name: string; id: string; order: number; locale: string }; component: (props: unknown, h?: unknown) => VNode }
+const registered: RegisteredEntry[] = [];
+const localeDicts: Record<string, Record<string, Record<string, string>>> = {};
 const ctx = {
-  effect: (fn) => fn(),
-  locale: { register: (ns, dicts) => { localeDicts[ns] = dicts; return () => {}; } },
+  effect: (fn: () => unknown) => fn(),
+  locale: { register: (ns: string, dicts: Record<string, Record<string, string>>) => { localeDicts[ns] = dicts; return () => {}; } },
   slots: {
-    inject: (_slot, fn) => { const dispose = fn(); return typeof dispose === "function" ? dispose : () => {}; },
-    register: (opts, component) => { registered.push({ opts, component }); return () => {}; },
+    inject: (_slot: string, fn: () => unknown) => { const dispose = fn(); return typeof dispose === "function" ? dispose : () => {}; },
+    register: (opts: RegisteredEntry["opts"], component: RegisteredEntry["component"]) => { registered.push({ opts, component }); return () => {}; },
   },
 };
-clientExports.apply(ctx);
-const entry = registered[0];
+(clientExports["apply"] as (c: typeof ctx) => void)(ctx);
+const entry = registered[0]!;
 console.log("slot entry:", entry.opts.name, "id=" + entry.opts.id, "order=" + entry.opts.order, "locale=" + entry.opts.locale);
 
-const zh = localeDicts["usage-dock"].zh;
-const en = localeDicts["usage-dock"].en;
+const zh = localeDicts["usage-dock"]!["zh"]!;
+const en = localeDicts["usage-dock"]!["en"]!;
 console.log("zh keys:", Object.keys(zh).length, "| en keys:", Object.keys(en).length);
 if (Object.keys(zh).length !== Object.keys(en).length) throw new Error("locale key mismatch");
 if ("lane.ctx" in zh || "ctx.tooltip" in zh) throw new Error("ctx lane keys should be gone");
 
-const t = (key, params) => {
+const t = (key: string, params?: Record<string, string>): string => {
   let s = zh[key] ?? key;
   for (const [k, v] of Object.entries(params ?? {})) s = s.replaceAll(`{${k}}`, v);
   return s;
 };
 
 // --- fake fetch ----------------------------------------------------------------
-const fetches = [];
+const fetches: string[] = [];
 const samplePayload = () => ({
-  ok: true, vendor: "zhipu", vendorLabel: "智谱 GLM Coding Plan", keyRef: "ZAI_CODING_CN_API_KEY", level: "lite",
+  ok: true as const, vendor: "zhipu" as const, vendorLabel: "智谱 GLM Coding Plan", keyRef: "ZAI_CODING_CN_API_KEY", level: "lite",
   fiveHour: { usedPct: 11, used: 219, total: 2000, remaining: 1781, resetAt: 1790489374013 },
   weekly: { usedPct: 61, used: 6100, total: 10000, remaining: 3900, resetAt: 1790529015976 },
   fetchedAt: 1790479000000,
 });
-globalThis.fetch = async (url) => { fetches.push(String(url)); return { json: async () => samplePayload() }; };
+globalThis.fetch = (async (url: unknown) => { fetches.push(String(url)); return { json: async () => samplePayload() }; }) as typeof fetch;
 
-const kids = (node) => {
+const kids = (node: VNode): VNode[] => {
   const c = node.props.children;
-  return (Array.isArray(c) ? c : c !== undefined ? [c] : []).flat(2).filter(Boolean);
+  return (Array.isArray(c) ? c : c !== undefined ? [c] : []).flat(2).filter(Boolean) as VNode[];
 };
 
 // --- render UsageDock (initial load) -------------------------------------------
 const UsageDock = entry.component;
 const selection = { next: { provider: "zai-coding-cn", model: "glm-5.3" } };
-const renderDock = () => { hooks.cursor = 0; return UsageDock({
-  useProjection: (key) => (key === "modelSelection" ? selection : undefined),
+const renderDock = (): VNode => { hooks.cursor = 0; return UsageDock({
+  useProjection: (key: string) => (key === "modelSelection" ? selection : undefined),
   t,
 }, h); };
 
@@ -101,57 +108,58 @@ const runEffects = async () => {
   for (const fn of fns) { const d = fn(); if (typeof d === "function") hooks.cleanups.push(d); }
   await new Promise((r) => setTimeout(r, 10));
 };
-let group = rootKids[0].type(rootKids[0].props); // body runs -> effect queued
+let group = (rootKids[0]!.type as (p: never) => VNode)(rootKids[0]!.props as never); // body runs -> effect queued
 await runEffects();
-console.log("initial fetch:", fetches[0], "| refresh flag absent:", !fetches[0].includes("refresh=1"));
+console.log("initial fetch:", fetches[0], "| refresh flag absent:", !fetches[0]!.includes("refresh=1"));
 
 // Populate state and inspect the rendered group. Cell 0 = UsageDock's
 // refreshKey (its body ran first); cell 1 = QuotaGroup's state.
 hooks.cells[1] = { loading: false, data: samplePayload() };
 hooks.cursor = 1;
-group = rootKids[0].type(rootKids[0].props);
+group = (rootKids[0]!.type as (p: never) => VNode)(rootKids[0]!.props as never);
 console.log("group is button:", group.type === "button", "| class:", group.props.className, "| aria:", group.props["aria-label"]);
-const lanes = kids(group).filter((n) => typeof n.type === "string" && /udLane/.test(n.props.className ?? ""));
+const lanes = kids(group).filter((n) => typeof n.type === "string" && /udLane/.test(String(n.props.className ?? "")));
 console.log("lanes:", lanes.length, "| tags:", lanes.map((l) => kids(l)[0]?.props?.children));
-const laneFacts = {};
+interface LaneFacts { cells: VNode[]; lit: number; pct: string; texts: string[] }
+const laneFacts: Record<string, LaneFacts> = {};
 for (const lane of lanes) {
   const parts = kids(lane);
-  const tag = parts[0].props.children;
-  const cellsNode = parts.find((n) => typeof n.type === "function");
-  const cellsSpan = cellsNode.type(cellsNode.props);
-  const cells = cellsSpan.props.children;
-  const pctRaw = parts.find((n) => /udNum/.test(n.props.className ?? "")).props.children;
+  const tag = String(parts[0]!.props.children);
+  const cellsNode = parts.find((n) => typeof n.type === "function")!;
+  const cellsSpan = (cellsNode.type as (p: unknown) => VNode)(cellsNode.props as never);
+  const cells = cellsSpan.props.children as VNode[];
+  const pctRaw = parts.find((n) => /udNum/.test(String(n.props.className ?? "")))!.props.children;
   const pct = Array.isArray(pctRaw) ? pctRaw.join("") : String(pctRaw);
   const texts = parts.map((n) => {
     const c = n.props.children;
     if (typeof c === "string") return c;
     if (Array.isArray(c) && c.every((x) => typeof x === "string" || typeof x === "number")) return c.join("");
     return null;
-  }).filter(Boolean);
+  }).filter(Boolean) as string[];
   laneFacts[tag] = {
-    cells: cells.length,
-    lit: cells.filter((c) => c.props.className.includes("udCellOn")).length,
+    cells,
+    lit: cells.filter((c) => String(c.props.className).includes("udCellOn")).length,
     pct,
     texts,
   };
-  console.log(`lane ${tag}: cells=${cells.length} lit=${laneFacts[tag].lit} pct=${pct} texts=${JSON.stringify(texts)}`);
+  console.log(`lane ${tag}: cells=${cells.length} lit=${laneFacts[tag]!.lit} pct=${pct} texts=${JSON.stringify(texts)}`);
 }
 
 // --- click-to-refresh ------------------------------------------------------------
-group.props.onClick();  // bumps refreshKey (cell 0) via the captured setter
+(group.props["onClick"] as () => void)();  // bumps refreshKey (cell 0) via the captured setter
 const refreshedTree = renderDock();
-const refreshedQuota = kids(refreshedTree)[0];
+const refreshedQuota = kids(refreshedTree)[0]!;
 hooks.cursor = 1; // continue after UsageDock's cell so QuotaGroup reuses cell 1
-refreshedQuota.type(refreshedQuota.props); // re-run body -> effect queued with refreshSignal=1
+(refreshedQuota.type as (p: unknown) => VNode)(refreshedQuota.props as never); // re-run body -> effect queued with refreshSignal=1
 await runEffects();
-const lastFetch = fetches[fetches.length - 1];
+const lastFetch = fetches[fetches.length - 1]!;
 console.log("click fetch:", lastFetch, "| has refresh=1:", lastFetch.includes("refresh=1"));
 for (const cleanup of hooks.cleanups.splice(0)) { try { cleanup(); } catch {} } // stop intervals
 
 // --- string checks on the bundle ---------------------------------------------
 // Sample: 5H used 11% (remaining 1781/2000 = 89%) -> 9 cells lit, pct "89%".
 // Weekly used 61% (remaining 3900/10000 = 39%) -> 4 cells lit, pct "39%".
-const checks = {
+const checks: Record<string, boolean> = {
   "dock anchor override present": src.includes('div[data-slot="conversation.composer.dock"]'),
   "!important beats inline contents": src.includes("display:flex !important"),
   "element part lifts specificity": src.includes('div[data-slot="conversation.composer.dock"]>*'),
@@ -164,12 +172,12 @@ const checks = {
   "zh weekly tag 周": zh["lane.wk"] === "周",
   "en weekly tag WK": en["lane.wk"] === "WK",
   "no quota.left key left": !("quota.left" in zh) && !("quota.left" in en) && !src.includes("quota.left"),
-  "remaining tooltip key zh": zh["quota.remaining"].startsWith("剩余 {pct}%"),
+  "remaining tooltip key zh": zh["quota.remaining"]!.startsWith("剩余 {pct}%"),
   "5H shows remaining 89%": laneFacts["5H"]?.pct === "89%",
   "5H drains to 9 lit cells": laneFacts["5H"]?.lit === 9,
   "weekly shows remaining 39%": laneFacts["周"]?.pct === "39%",
   "weekly drains to 4 lit cells": laneFacts["周"]?.lit === 4,
-  "no absolute-credit text in lanes": laneFacts["5H"] && !laneFacts["5H"].texts.some((s) => s.startsWith("剩")) && laneFacts["周"] && !laneFacts["周"].texts.some((s) => s.startsWith("剩")),
+  "no absolute-credit text in lanes": laneFacts["5H"] != null && !laneFacts["5H"]!.texts.some((s) => s.startsWith("剩")) && laneFacts["周"] != null && !laneFacts["周"]!.texts.some((s) => s.startsWith("剩")),
   "refresh hint zh": zh["quota.refresh"] === "点击立即刷新",
 };
 let failed = false;
